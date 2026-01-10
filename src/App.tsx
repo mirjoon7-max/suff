@@ -164,7 +164,7 @@ function PurchaseCard(){
 
   async function makeLink(productUrl: string, openNow=false){
     setDeepLink('')
-    setDeepLinkErr('')
+    setDeepLink('')
     setBusy(true)
 
     // 팝업이 막히는 경우가 많아서, "내부(about:blank) 페이지 + postMessage" 방식으로 최대한 안정적으로 처리합니다.
@@ -266,7 +266,7 @@ function PurchaseCard(){
       return link
     }catch(e:any){
       const msg = e?.message || String(e)
-      setDeepLinkErr(msg)
+      setDeepLink(msg)
       if(popup && !popup.closed){
         try{ popup.postMessage({ type:'DEEPLINK', link:'', error: msg }, '*') }catch{}
       }
