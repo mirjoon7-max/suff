@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, {  useEffect, useMemo, useRef, useState  } from 'react'
 import { parseLabelText } from './lib/parser'
 import { NUTRIENTS, NutrientKey } from './lib/nutrients'
 import { ageBasedSuggestions, buildSchedule, computeTotals, computeWarnings, SupplementItem, UserContext } from './lib/rules'
