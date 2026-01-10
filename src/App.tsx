@@ -7,6 +7,20 @@ import { ocrImage } from './lib/ocr'
 import { supabase } from './lib/supabase'
 
 const LS_KEY = 'suppguard_v1'
+const LS_REMINDERS = 'suppguard_reminders_v1'
+
+type Reminder = {
+  id: string
+  label: string
+  time: string // HH:MM
+  enabled: boolean
+}
+
+type RemindersState = {
+  enabled: boolean
+  reminders: Reminder[]
+  lastFired: Record<string, string> // reminderId -> YYYY-MM-DD
+}
 
 type Persisted = { items: SupplementItem[], ctx: UserContext }
 
@@ -18,10 +32,17 @@ const defaultCtx: UserContext = {
   routine: { wake:'07:00', breakfast:'08:00', lunch:'12:30', dinner:'18:30', bed:'23:30' }
 }
 
-type TabKey = '입력' | '분석' | '시간표' | '추천/구매'
+type TabKey = '홈' | '분석' | '시간표' | '추천/구매' | '알람' | '관리자'
 
-function TabBar({ tab, setTab }: { tab: TabKey, setTab: (t: TabKey)=>void }){
-  const tabs: TabKey[] = ['입력','분석','시간표','추천/구매']
+function TabBar({ tab, setTab, tabs }: { tab: TabKey, setTab: (t: TabKey)=>void, tabs: TabKey[] }){
+  const icon: Record<TabKey, string> = {
+    '홈': '🏠',
+    '분석': '🧪',
+    '시간표': '🗓️',
+    '추천/구매': '🛒',
+    '알람': '⏰',
+    '관리자': '🛡️',
+  }
   return (
     <div className="tabs">
       {tabs.map(t => (
@@ -30,7 +51,7 @@ function TabBar({ tab, setTab }: { tab: TabKey, setTab: (t: TabKey)=>void }){
           className={"tab" + (tab===t ? ' active' : '')}
           onClick={()=>setTab(t)}
         >
-          {t}
+          <span style={{marginRight: 6}}>{icon[t]}</span>{t}
         </button>
       ))}
     </div>
@@ -125,7 +146,7 @@ function PurchaseCard(){
     }
   }
 
-  async function makeLink(url: string){
+  async function makeLink(url: string, openNow: boolean){
     setError('')
     setDeepLink('')
     setLinkBusy(url)
@@ -137,9 +158,12 @@ function PurchaseCard(){
       })
       const j = await r.json()
       if(!j.ok) throw new Error(j.error || '링크 생성 실패')
-      setDeepLink(j.deepLink || '')
-      if(j.deepLink){
-        try{ await navigator.clipboard.writeText(j.deepLink) }catch{}
+      const link = j.deepLink || ''
+      setDeepLink(link)
+      if(link){
+        try{ await navigator.clipboard.writeText(link) }catch{}
+        // ✅ 원문 상품 URL을 직접 열지 않고, 생성된 파트너스 링크로만 이동
+        if(openNow) window.open(link, '_blank', 'noopener,noreferrer')
       }
     }catch(e:any){
       setError(e?.message || '링크 생성 실패')
@@ -177,16 +201,21 @@ function PurchaseCard(){
             <div key={idx} className="card" style={{background:'rgba(0,0,0,0.15)'}}>
               <div className="row" style={{justifyContent:'space-between'}}>
                 <div style={{fontWeight: 900, lineHeight: 1.25}}>{p.productName}</div>
-                <button className="btn" onClick={()=>makeLink(p.productUrl)} disabled={!!linkBusy}>
-                  {linkBusy===p.productUrl ? '생성 중…' : '구매링크 생성'}
-                </button>
+                <div className="row">
+                  <button className="btn" onClick={()=>makeLink(p.productUrl, false)} disabled={!!linkBusy}>
+                    {linkBusy===p.productUrl ? '생성 중…' : '링크만 생성'}
+                  </button>
+                  <button className="btn primary" onClick={()=>makeLink(p.productUrl, true)} disabled={!!linkBusy}>
+                    {linkBusy===p.productUrl ? '생성 중…' : '바로 구매'}
+                  </button>
+                </div>
               </div>
               <div className="small" style={{marginTop: 6}}>
                 {p.productPrice ? `가격: ${p.productPrice}` : ''}
                 {p.isRocket ? ' · 🚀 로켓' : ''}
               </div>
               <div className="small" style={{marginTop: 6}}>
-                <a href={p.productUrl} target="_blank" rel="noreferrer">원문 상품 페이지 열기</a>
+                🔒 원문 URL을 직접 열면 트래킹이 깨질 수 있어요. 위의 <b>바로 구매</b> 버튼을 사용해 주세요.
               </div>
             </div>
           ))}
@@ -251,11 +280,29 @@ export default function App(){
   const [items, setItems] = useState<SupplementItem[]>(persisted.items)
   const [ctx, setCtx] = useState<UserContext>(persisted.ctx)
 
-  const [tab, setTab] = useState<TabKey>('입력')
+  function defaultReminderState(fromCtx: UserContext): RemindersState {
+    const base: Reminder[] = [
+      { id: 'morning', label: '아침', time: fromCtx.routine?.wake || '07:00', enabled: true },
+      { id: 'lunch', label: '점심', time: fromCtx.routine?.lunch || '12:30', enabled: false },
+      { id: 'dinner', label: '저녁', time: fromCtx.routine?.dinner || '18:30', enabled: false },
+    ]
+    return { enabled: false, reminders: base, lastFired: {} }
+  }
+
+  const [remindersState, setRemindersState] = useState<RemindersState>(
+    load<RemindersState>(LS_REMINDERS, defaultReminderState(persisted.ctx))
+  )
+
+  const [tab, setTab] = useState<TabKey>('홈')
 
   // Auth: if Supabase is configured, show login gate (with optional demo mode)
   const [demoMode, setDemoMode] = useState(false)
   const [session, setSession] = useState<any>(null)
+
+  // Admin (optional)
+  const [adminUsers, setAdminUsers] = useState<any[]>([])
+  const [adminBusy, setAdminBusy] = useState(false)
+  const [adminErr, setAdminErr] = useState('')
 
   React.useEffect(() => {
     if(!supabase) return
@@ -272,6 +319,54 @@ export default function App(){
 
   // persist
   React.useEffect(() => { save(LS_KEY, { items, ctx }) }, [items, ctx])
+  React.useEffect(() => { save(LS_REMINDERS, remindersState) }, [remindersState])
+
+  // 알람: (웹/PWA 특성상) 앱이 완전히 종료된 상태에서는 100% 보장하기 어렵습니다.
+  // 하지만 설치(PWA) + 권한 허용 + 백그라운드 제한이 낮은 환경에서는 실사용이 가능합니다.
+  React.useEffect(() => {
+    if(!remindersState.enabled) return
+    let alive = true
+
+    const tick = async () => {
+      if(!alive) return
+      const d = new Date()
+      const hh = String(d.getHours()).padStart(2,'0')
+      const mm = String(d.getMinutes()).padStart(2,'0')
+      const now = `${hh}:${mm}`
+      const today = d.toISOString().slice(0,10)
+
+      for(const r of remindersState.reminders){
+        if(!r.enabled) continue
+        if(r.time !== now) continue
+        if(remindersState.lastFired[r.id] === today) continue
+
+        // mark fired
+        setRemindersState(prev => ({
+          ...prev,
+          lastFired: { ...prev.lastFired, [r.id]: today }
+        }))
+
+        // notification
+        const title = `⏰ ${r.label} 복용 알람`
+        const body = '영양제/약 복용 시간이에요 🙂'
+        try{
+          if('Notification' in window && Notification.permission === 'granted'){
+            new Notification(title, { body })
+          }
+        }catch{}
+
+        // fallback: vibration + alert
+        try{ (navigator as any).vibrate?.([200,100,200,100,200]) }catch{}
+        // 앱이 켜져 있을 때는 사용자 눈에 확실히 보이도록
+        try{ alert(`${title}\n\n${body}`) }catch{}
+      }
+    }
+
+    // 20초마다 체크 (가벼운 폴링)
+    const id = window.setInterval(tick, 20_000)
+    tick()
+    return () => { alive = false; window.clearInterval(id) }
+  }, [remindersState.enabled, remindersState.reminders, remindersState.lastFired])
 
   const totals = useMemo(() => computeTotals(items, ctx), [items, ctx])
   const warnings = useMemo(() => computeWarnings(items, totals, ctx), [items, totals, ctx])
@@ -331,6 +426,54 @@ export default function App(){
     setItems(prev => prev.map(it => it.id===id ? { ...it, nutrients: [...it.nutrients, { key: k, amount }] } : it))
   }
 
+  async function fetchAdminUsers(){
+    setAdminErr('')
+    setAdminBusy(true)
+    try{
+      const token = session?.access_token
+      if(!token) throw new Error('로그인 세션 토큰을 찾지 못했어요. 새로고침 후 다시 시도해 주세요.')
+      const r = await fetch('/.netlify/functions/adminListUsers', {
+        headers: { authorization: `Bearer ${token}` }
+      })
+      const j = await r.json()
+      if(!j.ok) throw new Error(j.error || '회원 목록 조회 실패')
+      setAdminUsers(j.users || [])
+    }catch(e:any){
+      setAdminErr(e?.message || '회원 목록 조회 실패')
+    }finally{
+      setAdminBusy(false)
+    }
+  }
+
+  async function requestNotificationPermission(){
+    if(!('Notification' in window)) return alert('이 브라우저는 알림을 지원하지 않아요.')
+    const p = await Notification.requestPermission()
+    if(p !== 'granted') alert('알림 권한이 허용되지 않았어요. 브라우저 설정에서 “알림 허용”을 켜 주세요.')
+  }
+
+  function updateReminder(id: string, patch: Partial<Reminder>){
+    setRemindersState(prev => ({
+      ...prev,
+      reminders: prev.reminders.map(r => r.id===id ? { ...r, ...patch } : r)
+    }))
+  }
+
+  function addReminder(){
+    const id = uid()
+    setRemindersState(prev => ({
+      ...prev,
+      reminders: [...prev.reminders, { id, label: '복용', time: '07:00', enabled: true }]
+    }))
+  }
+
+  function deleteReminder(id: string){
+    setRemindersState(prev => {
+      const next = prev.reminders.filter(r => r.id !== id)
+      const { [id]: _, ...rest } = prev.lastFired
+      return { ...prev, reminders: next, lastFired: rest }
+    })
+  }
+
   function findKeyFromUserText(t: string): NutrientKey | null {
     const low = t.toLowerCase()
     const match = NUTRIENTS.find(n => n.synonyms.some(s => low.includes(s.toLowerCase())))
@@ -341,6 +484,10 @@ export default function App(){
   if(supabase && !session && !demoMode){
     return <AuthScreen onDemo={()=>setDemoMode(true)} />
   }
+
+  const adminEmail = (import.meta.env.VITE_ADMIN_EMAIL as string | undefined) || ''
+  const isAdmin = !!adminEmail && (session?.user?.email || '').toLowerCase() === adminEmail.toLowerCase()
+  const tabs: TabKey[] = ['홈','분석','시간표','추천/구매','알람', ...(isAdmin ? (['관리자'] as TabKey[]) : [])]
 
   return (
     <div className="container">
@@ -357,7 +504,7 @@ export default function App(){
       </div>
 
       <div className="row" style={{justifyContent:'space-between', marginTop: 12}}>
-        <TabBar tab={tab} setTab={setTab} />
+        <TabBar tab={tab} setTab={setTab} tabs={tabs} />
         <div className="row">
           {demoMode && <span className="badge warn">데모 모드</span>}
           {supabase && session && (
@@ -366,7 +513,7 @@ export default function App(){
         </div>
       </div>
 
-      {tab==='입력' && (
+      {tab==='홈' && (
       <div className="grid" style={{marginTop: 14}}>
         <div className="card">
           <h2>1) 영양제 추가 (글 입력 / 사진 OCR)</h2>
@@ -651,6 +798,100 @@ export default function App(){
           </div>
 
           <PurchaseCard />
+        </div>
+      )}
+
+      {tab==='알람' && (
+        <div className="grid" style={{marginTop: 14, gridTemplateColumns:'1fr'}}>
+          <div className="card">
+            <h2>6) 복용 알람 (시간 조정 + 알람 ON/OFF)</h2>
+            <div className="small">
+              ✅ <b>시간은 자유롭게 변경</b>할 수 있어요. 
+              <br />⚠️ 웹/PWA 특성상 <b>앱을 완전히 종료</b>하면 알람이 100% 보장되진 않아요. (설치한 PWA에서 권한을 허용하고, 폰의 배터리 절전이 강하지 않으면 실사용 가능)
+            </div>
+
+            <div className="hr" />
+
+            <div className="row" style={{justifyContent:'space-between'}}>
+              <div className="row">
+                <label className="chip" style={{cursor:'pointer'}}>
+                  <input
+                    type="checkbox"
+                    checked={remindersState.enabled}
+                    onChange={e=>setRemindersState(prev => ({ ...prev, enabled: e.target.checked }))}
+                    style={{marginRight: 8}}
+                  />
+                  알람 사용
+                </label>
+                <button className="btn" onClick={requestNotificationPermission}>🔔 알림 권한 요청</button>
+                {'Notification' in window && <span className="small">권한: <b>{Notification.permission}</b></span>}
+              </div>
+              <button className="btn" onClick={addReminder}>+ 알람 추가</button>
+            </div>
+
+            <div style={{height: 10}} />
+
+            <table className="table">
+              <thead>
+                <tr><th style={{width: 90}}>ON</th><th>이름</th><th style={{width: 140}}>시간</th><th style={{width: 120}}>삭제</th></tr>
+              </thead>
+              <tbody>
+                {remindersState.reminders.map(r => (
+                  <tr key={r.id}>
+                    <td>
+                      <input type="checkbox" checked={r.enabled} onChange={e=>updateReminder(r.id, { enabled: e.target.checked })} />
+                    </td>
+                    <td>
+                      <input className="input" value={r.label} onChange={e=>updateReminder(r.id, { label: e.target.value })} />
+                    </td>
+                    <td>
+                      <input type="time" value={r.time} onChange={e=>updateReminder(r.id, { time: e.target.value })} />
+                    </td>
+                    <td>
+                      <button className="btn" onClick={()=>deleteReminder(r.id)}>🗑️ 삭제</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab==='관리자' && (
+        <div className="grid" style={{marginTop: 14, gridTemplateColumns:'1fr'}}>
+          <div className="card">
+            <h2>7) 관리자 — 가입 회원 목록</h2>
+            <div className="small">
+              이 화면은 <b>VITE_ADMIN_EMAIL</b>로 지정한 이메일로 로그인했을 때만 보여요.
+            </div>
+            <div className="hr" />
+
+            <div className="row">
+              <button className="btn primary" onClick={fetchAdminUsers} disabled={adminBusy}>
+                {adminBusy ? '불러오는 중…' : '회원 목록 불러오기'}
+              </button>
+              {adminErr && <span className="badge warn">{adminErr}</span>}
+              {!adminErr && adminUsers.length>0 && <span className="badge">총 {adminUsers.length}명</span>}
+            </div>
+
+            {adminUsers.length>0 && (
+              <table className="table" style={{marginTop: 12}}>
+                <thead>
+                  <tr><th>이메일</th><th style={{width: 200}}>가입일</th><th style={{width: 220}}>마지막 로그인</th></tr>
+                </thead>
+                <tbody>
+                  {adminUsers.map((u, idx) => (
+                    <tr key={idx}>
+                      <td>{u.email || '-'}</td>
+                      <td className="small">{u.created_at || '-'}</td>
+                      <td className="small">{u.last_sign_in_at || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       )}
 
