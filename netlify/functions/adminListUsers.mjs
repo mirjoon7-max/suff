@@ -65,6 +65,7 @@ export default async function handler(req){
       email: u.email,
       created_at: u.created_at,
       last_sign_in_at: u.last_sign_in_at,
+      email_confirmed_at: u.email_confirmed_at || u.confirmed_at || null,
       app_metadata: u.app_metadata,
       user_metadata: u.user_metadata,
     }))

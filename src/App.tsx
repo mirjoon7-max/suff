@@ -109,7 +109,15 @@ function AuthScreen({ onDemo }: { onDemo: ()=>void }){
           <div style={{fontWeight: 900}}>{mode==='login' ? '로그인' : '회원가입'}</div>
           <button className="btn" onClick={()=>setMode(mode==='login'?'signup':'login')}>↔︎ 전환</button>
         </div>
-        <div style={{height: 10}} />
+        
+            <div className="note small">
+              ⚠️ 참고: 웹/PWA 알람은 OS 정책 때문에 <b>앱이 백그라운드</b>일 때 지연/누락될 수 있어요.
+              <br/>• iPhone/iPad: “홈 화면에 추가” 후 알림 허용, 저전력 모드/집중모드 설정을 확인해 주세요.
+              <br/>• Android: 배터리 최적화/절전 제외, 알림 허용을 확인해 주세요.
+              <br/>정확한 알람이 꼭 필요하면 휴대폰 기본 ‘알람/리마인더’도 함께 설정을 권장해요 🙂
+            </div>
+
+            <div style={{height: 10}} />
         <input className="input" placeholder="이메일" value={email} onChange={e=>setEmail(e.target.value)} />
         <div style={{height: 8}} />
         <input className="input" type="password" placeholder="비밀번호" value={password} onChange={e=>setPassword(e.target.value)} />
@@ -154,74 +162,117 @@ function PurchaseCard(){
     }
   }
 
-  async function makeLink(url: string, openNow: boolean){
-    setError('')
+  async function makeLink(productUrl: string, openNow=false){
     setDeepLink('')
-    setLinkBusy(url)
-    // ✅ 팝업 차단 회피: 사용자 클릭 순간에 먼저 빈 창을 열어두고,
-    // 링크 생성이 끝나면 그 창을 쿠팡 파트너스 링크로 이동시킨다.
-    let popup: Window | null = null
-    if(openNow){
-      try{
-        popup = window.open('about:blank', '_blank')
-        if(popup){
-          (popup as any).opener = null
-          try{
-            popup.document.title = 'SuppGuard'
-            popup.document.body.style.fontFamily = 'system-ui, sans-serif'
-            popup.document.body.style.padding = '24px'
-            popup.document.body.innerHTML = '<h2>쿠팡으로 이동 준비 중…</h2><p>잠시만 기다려 주세요 🙂</p>'
-          }catch{}
-        }
-      }catch{
-        popup = null
-      }
+    setDeepLinkErr('')
+    setBusy(true)
+
+    // 팝업이 막히는 경우가 많아서, "내부(about:blank) 페이지 + postMessage" 방식으로 최대한 안정적으로 처리합니다.
+    const popup = openNow ? window.open('', '_blank') : null
+
+    const popupHtml = `<!doctype html>
+<html><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>쿠팡으로 이동</title>
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial; padding:24px; line-height:1.5;}
+  .muted{opacity:.7}
+  button{padding:12px 16px; font-size:16px; border-radius:10px; border:0; background:#111827; color:#fff; cursor:pointer;}
+  button[disabled]{opacity:.45; cursor:not-allowed;}
+  .box{max-width:720px}
+</style>
+</head>
+<body>
+  <div class="box">
+    <h2>쿠팡으로 이동 준비 중…</h2>
+    <p id="msg" class="muted">파트너스 링크를 만들고 있어요. 잠시만 기다려 주세요 🙂</p>
+    <div style="margin:18px 0">
+      <button id="btn" disabled>쿠팡 열기</button>
+    </div>
+    <p class="muted" style="font-size:14px">자동 이동이 안 되면 위 버튼을 눌러 주세요.</p>
+  </div>
+
+<script>
+  let link = '';
+  const msg = document.getElementById('msg');
+  const btn = document.getElementById('btn');
+
+  function enable(linkUrl){
+    link = linkUrl;
+    btn.disabled = !link;
+    btn.onclick = () => { if(link) location.href = link; };
+  }
+
+  window.addEventListener('message', (e) => {
+    const d = e.data || {};
+    if(d.type !== 'DEEPLINK') return;
+
+    if(d.link){
+      enable(d.link);
+      msg.textContent = '링크 생성 완료! 곧 쿠팡으로 이동합니다…';
+      // 자동 이동 시도
+      setTimeout(() => { try{ location.href = d.link }catch{} }, 200);
+      // 3초 후에도 남아있다면 버튼 안내
+      setTimeout(() => { msg.textContent = '자동 이동이 안 되면 “쿠팡 열기” 버튼을 눌러 주세요 🙂'; }, 3000);
+    } else {
+      enable('');
+      msg.textContent = '링크 생성 실패: ' + (d.error || '알 수 없는 오류');
     }
+  });
+
+  // 만약 postMessage가 안 오면 안내 문구 업데이트
+  setTimeout(() => {
+    if(!link) msg.textContent = '아직 링크를 받지 못했어요. 잠시 후에도 안 되면 팝업/차단 설정을 확인해 주세요 🙂';
+  }, 6000);
+</script>
+</body></html>`;
+
     try{
-      const r = await fetch('/.netlify/functions/coupangDeeplink', {
-        method:'POST',
-        headers:{'content-type':'application/json'},
-        body: JSON.stringify({ coupangUrl: url })
-      })
-      const j = await r.json()
-      if(!j.ok) throw new Error(j.error || '링크 생성 실패')
-      const link = j.deepLink || ''
+      if(popup){
+        try{
+          popup.document.open()
+          popup.document.write(popupHtml)
+          popup.document.close()
+        }catch{}
+      }
+
+      const url = '/.netlify/functions/coupangDeeplink'
+      const res = await fetch(url, { method:'POST', headers:{ 'content-type':'application/json' }, body: JSON.stringify({ productUrl }) })
+      const textRes = await res.text()
+      let j:any = null
+      try{ j = JSON.parse(textRes) }catch{
+        throw new Error('서버 응답이 JSON이 아니에요. (Netlify Functions가 HTML을 반환했을 수 있어요)')
+      }
+      if(!res.ok || !j?.ok) throw new Error(j?.error || 'Deeplink 생성 실패')
+
+      const link = j.deeplink as string
+      if(!link) throw new Error('Deeplink not found in response')
+
       setDeepLink(link)
-      if(link){
-        try{ await navigator.clipboard.writeText(link) }catch{}
-        // ✅ 원문 상품 URL을 직접 열지 않고, 생성된 파트너스 링크로만 이동
-        if(openNow){
-          // 1) 빈창을 미리 열어둔 경우: 그 창을 링크로 이동
-          if(popup && !popup.closed){
-            // 1) 팝업 창으로 이동 시도
-            try{ popup.location.href = link }catch{}
-            // 2) 일부 브라우저는 비동기 이후 이동을 막아 about:blank로 남을 수 있어요.
-            //    0.5초 후에도 about:blank면 현재 탭으로 이동(확실한 fallback)
-            setTimeout(() => {
-              try{
-                if(popup && !popup.closed){
-                  const href = popup.location.href
-                  if(href === 'about:blank'){
-                    try{ popup.close() }catch{}
-                    window.location.href = link
-                  }
-                }
-              }catch{
-                // cross-origin으로 바뀌었다면(=이미 이동 성공) 여기서 에러가 날 수 있음 → 무시
-              }
-            }, 500)
-          }else{
-            // 2) 팝업이 막힌 경우: 현재 탭에서 열기(모바일/PWA에서 더 안정적)
-            window.location.href = link
-          }
+      try{ await navigator.clipboard.writeText(link) }catch{}
+
+      if(openNow){
+        // 1) 팝업이 열려 있으면 postMessage로 전달 (가장 안정적)
+        if(popup && !popup.closed){
+          try{ popup.postMessage({ type:'DEEPLINK', link }, '*') }catch{}
+          // 2) 그래도 막히는 브라우저 대비: 약간 뒤에 직접 이동 시도
+          setTimeout(() => { try{ if(!popup.closed) popup.location.href = link }catch{} }, 1200)
+        } else {
+          // 팝업이 막히면 현재 탭에서 이동
+          window.location.href = link
         }
       }
+
+      return link
     }catch(e:any){
-      setError(e?.message || '링크 생성 실패')
-      // 링크 생성 실패 시, 미리 열어둔 빈 창이 있으면 닫기
-      try{ if(popup && !popup.closed) popup.close() }catch{}
+      const msg = e?.message || String(e)
+      setDeepLinkErr(msg)
+      if(popup && !popup.closed){
+        try{ popup.postMessage({ type:'DEEPLINK', link:'', error: msg }, '*') }catch{}
+      }
+      throw e
     }finally{
-      setLinkBusy(null)
+      setBusy(false)
     }
   }
 
@@ -342,6 +393,26 @@ export default function App(){
   const [remindersState, setRemindersState] = useState<RemindersState>(
     load<RemindersState>(LS_REMINDERS, defaultReminderState(persisted.ctx))
   )
+
+
+  const [notifPermission, setNotifPermission] = useState<string>(() => {
+    try{
+      // iOS/Safari 등 일부 환경에서는 Notification이 없을 수 있어요.
+      // (앱 설치 후에도 알림은 OS 정책에 따라 제한될 수 있습니다)
+      // @ts-ignore
+      return (typeof window !== 'undefined' && 'Notification' in window) ? Notification.permission : 'unsupported'
+    }catch{
+      return 'unsupported'
+    }
+  })
+
+  useEffect(() => {
+    try{
+      // 권한 표시를 최신으로 동기화
+      if('Notification' in window) setNotifPermission(Notification.permission)
+    }catch{}
+  }, [])
+
 
   // 생활패턴(기상/식사/취침 시간)과 알람 시간을 항상 동기화
   React.useEffect(() => {
@@ -521,11 +592,62 @@ export default function App(){
     }
   }
 
-  async function requestNotificationPermission(){
-    if(!('Notification' in window)) return alert('이 브라우저는 알림을 지원하지 않아요.')
+  
+  function downloadAdminCsv(){
+    if(!adminUsers || adminUsers.length === 0){
+      return alert('다운로드할 사용자 데이터가 없어요. 먼저 “새로고침”을 눌러 주세요 🙂')
+    }
+    const headers = ['email','created_at','last_sign_in_at','email_confirmed_at','id']
+    const esc = (v:any) => {
+      const s = (v ?? '').toString()
+      const needs = /[",\n]/.test(s)
+      const out = s.replace(/"/g, '""')
+      return needs ? `"${out}"` : out
+    }
+    const lines = [
+      headers.join(','),
+      ...adminUsers.map((u:any) => [
+        esc(u.email),
+        esc(u.created_at),
+        esc(u.last_sign_in_at),
+        esc(u.email_confirmed_at),
+        esc(u.id),
+      ].join(','))
+    ]
+    const blob = new Blob([lines.join('\n')], { type:'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const ts = new Date().toISOString().slice(0,10)
+    a.href = url
+    a.download = `suppguard_users_${ts}.csv`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
+async function requestNotificationPermission(){
+    if(!('Notification' in window)) {
+      setNotifPermission('unsupported')
+      return alert('이 브라우저는 알림을 지원하지 않아요.')
+    }
     const p = await Notification.requestPermission()
+    setNotifPermission(p)
     if(p !== 'granted') alert('알림 권한이 허용되지 않았어요. 브라우저 설정에서 “알림 허용”을 켜 주세요.')
   }
+
+  function testNotificationNow(){
+    if(!('Notification' in window)) return alert('이 브라우저는 알림을 지원하지 않아요.')
+    if(Notification.permission !== 'granted'){
+      return alert('테스트 전에 먼저 “알림 허용”을 눌러 주세요 🙂')
+    }
+    try{
+      new Notification('SuppGuard', { body: '테스트 알림이에요. 알림이 뜨면 정상입니다 🙂' })
+    }catch(err){
+      alert('알림 표시가 차단되었을 수 있어요. 브라우저/OS 알림 설정을 확인해 주세요.')
+    }
+  }
+
 
   function updateReminder(id: string, patch: Partial<Reminder>){
     setRemindersState(prev => ({
@@ -758,7 +880,8 @@ export default function App(){
               알람 사용
             </label>
             <button className="btn" onClick={requestNotificationPermission}>🔔 알림 권한 요청</button>
-            {'Notification' in window && <span className="small">권한: <b>{Notification.permission}</b></span>}
+              <button className="btn" onClick={testNotificationNow}>🧪 테스트 알림</button>
+            <span className="small">권한: <b>{notifPermission}</b></span>
           </div>
 
           <div style={{height: 8}} />
@@ -938,7 +1061,7 @@ export default function App(){
                 알람 사용
               </label>
               <button className="btn" onClick={requestNotificationPermission}>🔔 알림 권한 요청</button>
-              {'Notification' in window && <span className="small">권한: <b>{Notification.permission}</b></span>}
+              {'Notification' in window && <span className="small">권한: <b>{notifPermission}</b></span>}
             </div>
 
             <div style={{height: 10}} />
@@ -984,6 +1107,7 @@ export default function App(){
               <button className="btn primary" onClick={fetchAdminUsers} disabled={adminBusy}>
                 {adminBusy ? '불러오는 중…' : '회원 목록 불러오기'}
               </button>
+              <button className="btn" onClick={downloadAdminCsv} disabled={adminBusy || !adminUsers?.length}>CSV 다운로드</button>
               {adminErr && <span className="badge warn">{adminErr}</span>}
               {!adminErr && adminUsers.length>0 && <span className="badge">총 {adminUsers.length}명</span>}
             </div>
@@ -991,7 +1115,7 @@ export default function App(){
             {adminUsers.length>0 && (
               <table className="table" style={{marginTop: 12}}>
                 <thead>
-                  <tr><th>이메일</th><th style={{width: 200}}>가입일</th><th style={{width: 220}}>마지막 로그인</th></tr>
+                  <tr><th>이메일</th><th style={{width: 200}}>가입일</th><th style={{width: 220}}>마지막 로그인</th><th style={{width: 120}}>인증</th></tr>
                 </thead>
                 <tbody>
                   {adminUsers.map((u, idx) => (
@@ -999,6 +1123,7 @@ export default function App(){
                       <td>{u.email || '-'}</td>
                       <td className="small">{u.created_at || '-'}</td>
                       <td className="small">{u.last_sign_in_at || '-'}</td>
+                      <td className="small">{u.email_confirmed_at ? '✅' : '-'}</td>
                     </tr>
                   ))}
                 </tbody>
