@@ -54,7 +54,28 @@ export default async function handler(req){
       return json({ ok:false, error:'Coupang API request failed', status: resp.status, raw: data }, 502)
     }
 
-    const deepLink = data?.data?.shortenUrl || data?.data?.shortenUrlList?.[0]?.shortenUrl || data?.data?.coupangUrl || null
+    // Coupang deeplink response shapes vary across docs/examples.
+    // Common patterns:
+    //  - { data: [ { originalUrl, shortenUrl, landingUrl? } ] }
+    //  - { data: { shortenUrlList: [ { shortenUrl } ] } }
+    //  - { data: { shortenUrl: "..." } }
+    const dataField = data?.data
+    const firstFromArray = Array.isArray(dataField) ? dataField[0] : null
+    const firstFromList = Array.isArray(dataField?.shortenUrlList) ? dataField.shortenUrlList[0] : null
+
+    const deepLink =
+      firstFromArray?.shortenUrl ||
+      firstFromArray?.landingUrl ||
+      firstFromArray?.coupangUrl ||
+      firstFromList?.shortenUrl ||
+      dataField?.shortenUrl ||
+      dataField?.coupangUrl ||
+      null
+
+    if(!deepLink){
+      return json({ ok:false, error:'Deeplink not found in response', raw: data }, 502)
+    }
+
     return json({ ok:true, deepLink, raw: data })
   }catch(e){
     return json({ ok:false, error: String(e?.message || e) }, 500)
