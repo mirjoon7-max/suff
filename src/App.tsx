@@ -16,6 +16,14 @@ type Reminder = {
   enabled: boolean
 }
 
+const ROUTINE_SLOTS = [
+  { id: 'wake', label: '기상', key: 'wake' as const },
+  { id: 'breakfast', label: '아침', key: 'breakfast' as const },
+  { id: 'lunch', label: '점심', key: 'lunch' as const },
+  { id: 'dinner', label: '저녁', key: 'dinner' as const },
+  { id: 'bed', label: '취침', key: 'bed' as const },
+] as const
+
 type RemindersState = {
   enabled: boolean
   reminders: Reminder[]
@@ -201,21 +209,16 @@ function PurchaseCard(){
             <div key={idx} className="card" style={{background:'rgba(0,0,0,0.15)'}}>
               <div className="row" style={{justifyContent:'space-between'}}>
                 <div style={{fontWeight: 900, lineHeight: 1.25}}>{p.productName}</div>
-                <div className="row">
-                  <button className="btn" onClick={()=>makeLink(p.productUrl, false)} disabled={!!linkBusy}>
-                    {linkBusy===p.productUrl ? '생성 중…' : '링크만 생성'}
-                  </button>
-                  <button className="btn primary" onClick={()=>makeLink(p.productUrl, true)} disabled={!!linkBusy}>
-                    {linkBusy===p.productUrl ? '생성 중…' : '바로 구매'}
-                  </button>
-                </div>
+                <button className="btn primary" onClick={()=>makeLink(p.productUrl, true)} disabled={!!linkBusy}>
+                  {linkBusy===p.productUrl ? '생성 중…' : '제품 확인'}
+                </button>
               </div>
               <div className="small" style={{marginTop: 6}}>
                 {p.productPrice ? `가격: ${p.productPrice}` : ''}
                 {p.isRocket ? ' · 🚀 로켓' : ''}
               </div>
               <div className="small" style={{marginTop: 6}}>
-                🔒 원문 URL을 직접 열면 트래킹이 깨질 수 있어요. 위의 <b>바로 구매</b> 버튼을 사용해 주세요.
+                🔒 <b>제품 확인</b>을 누르면 <b>파트너스 링크를 먼저 생성</b>하고, 그 링크로 쿠팡이 열려요.
               </div>
             </div>
           ))}
@@ -281,17 +284,45 @@ export default function App(){
   const [ctx, setCtx] = useState<UserContext>(persisted.ctx)
 
   function defaultReminderState(fromCtx: UserContext): RemindersState {
-    const base: Reminder[] = [
-      { id: 'morning', label: '아침', time: fromCtx.routine?.wake || '07:00', enabled: true },
-      { id: 'lunch', label: '점심', time: fromCtx.routine?.lunch || '12:30', enabled: false },
-      { id: 'dinner', label: '저녁', time: fromCtx.routine?.dinner || '18:30', enabled: false },
-    ]
+    const r = fromCtx.routine || defaultCtx.routine
+    const base: Reminder[] = ROUTINE_SLOTS.map(s => ({
+      id: s.id,
+      label: s.label,
+      time: (r as any)[s.key] || '07:00',
+      enabled: s.id === 'wake',
+    }))
     return { enabled: false, reminders: base, lastFired: {} }
   }
 
   const [remindersState, setRemindersState] = useState<RemindersState>(
     load<RemindersState>(LS_REMINDERS, defaultReminderState(persisted.ctx))
   )
+
+  // 생활패턴(기상/식사/취침 시간)과 알람 시간을 항상 동기화
+  React.useEffect(() => {
+    const r = ctx.routine || defaultCtx.routine
+    setRemindersState(prev => {
+      const byId = Object.fromEntries(prev.reminders.map(x => [x.id, x])) as Record<string, Reminder>
+      const nextReminders: Reminder[] = ROUTINE_SLOTS.map(s => {
+        const old = byId[s.id]
+        const time = (r as any)[s.key] || old?.time || '07:00'
+        return {
+          id: s.id,
+          label: old?.label || s.label,
+          time,
+          enabled: old?.enabled ?? (s.id === 'wake'),
+        }
+      })
+
+      // lastFired는 기존 값 유지하되, 사라진 id는 정리
+      const keepIds = new Set(nextReminders.map(x => x.id))
+      const nextLast: Record<string,string> = {}
+      for(const [k,v] of Object.entries(prev.lastFired || {})){
+        if(keepIds.has(k)) nextLast[k] = v
+      }
+      return { ...prev, reminders: nextReminders, lastFired: nextLast }
+    })
+  }, [ctx.routine.wake, ctx.routine.breakfast, ctx.routine.lunch, ctx.routine.dinner, ctx.routine.bed])
 
   const [tab, setTab] = useState<TabKey>('홈')
 
@@ -654,15 +685,54 @@ export default function App(){
           <div className="small" style={{fontWeight: 800, marginBottom: 6}}>생활 패턴(스케줄 제안에 사용)</div>
           <div className="kv">
             <div className="small">기상</div>
-            <input className="input" value={ctx.routine.wake} onChange={e=>setCtx({...ctx, routine: {...ctx.routine, wake: e.target.value}})} />
+            <input type="time" className="input" value={ctx.routine.wake} onChange={e=>setCtx({...ctx, routine: {...ctx.routine, wake: e.target.value}})} />
             <div className="small">아침</div>
-            <input className="input" value={ctx.routine.breakfast} onChange={e=>setCtx({...ctx, routine: {...ctx.routine, breakfast: e.target.value}})} />
+            <input type="time" className="input" value={ctx.routine.breakfast} onChange={e=>setCtx({...ctx, routine: {...ctx.routine, breakfast: e.target.value}})} />
             <div className="small">점심</div>
-            <input className="input" value={ctx.routine.lunch} onChange={e=>setCtx({...ctx, routine: {...ctx.routine, lunch: e.target.value}})} />
+            <input type="time" className="input" value={ctx.routine.lunch} onChange={e=>setCtx({...ctx, routine: {...ctx.routine, lunch: e.target.value}})} />
             <div className="small">저녁</div>
-            <input className="input" value={ctx.routine.dinner} onChange={e=>setCtx({...ctx, routine: {...ctx.routine, dinner: e.target.value}})} />
+            <input type="time" className="input" value={ctx.routine.dinner} onChange={e=>setCtx({...ctx, routine: {...ctx.routine, dinner: e.target.value}})} />
             <div className="small">취침</div>
-            <input className="input" value={ctx.routine.bed} onChange={e=>setCtx({...ctx, routine: {...ctx.routine, bed: e.target.value}})} />
+            <input type="time" className="input" value={ctx.routine.bed} onChange={e=>setCtx({...ctx, routine: {...ctx.routine, bed: e.target.value}})} />
+          </div>
+
+          <div className="hr" />
+          <div className="small" style={{fontWeight: 800, marginBottom: 6}}>복용 알람 (생활 패턴 시간과 연동)</div>
+          <div className="small" style={{marginBottom: 10}}>
+            ⏰ 위 시간(기상/식사/취침)을 바꾸면 <b>알람 시간도 같이</b> 바뀌어요. 알람 ON/OFF만 여기서 켜고 끌 수 있어요.
+          </div>
+
+          <div className="row" style={{justifyContent:'space-between', flexWrap:'wrap', gap: 8}}>
+            <label className="chip" style={{cursor:'pointer'}}>
+              <input
+                type="checkbox"
+                checked={remindersState.enabled}
+                onChange={e=>setRemindersState(prev => ({ ...prev, enabled: e.target.checked }))}
+                style={{marginRight: 8}}
+              />
+              알람 사용
+            </label>
+            <button className="btn" onClick={requestNotificationPermission}>🔔 알림 권한 요청</button>
+            {'Notification' in window && <span className="small">권한: <b>{Notification.permission}</b></span>}
+          </div>
+
+          <div style={{height: 8}} />
+          <div className="chips">
+            {ROUTINE_SLOTS.map(s => {
+              const r = remindersState.reminders.find(x => x.id === s.id)
+              const t = (ctx.routine as any)[s.key] as string
+              return (
+                <label key={s.id} className="chip" style={{cursor:'pointer'}}>
+                  <input
+                    type="checkbox"
+                    checked={!!r?.enabled}
+                    onChange={e=>updateReminder(s.id, { enabled: e.target.checked })}
+                    style={{marginRight: 8}}
+                  />
+                  {s.label} <span className="small" style={{opacity: 0.9}}>({t})</span>
+                </label>
+              )
+            })}
           </div>
 
           <div className="hr" />
@@ -804,56 +874,54 @@ export default function App(){
       {tab==='알람' && (
         <div className="grid" style={{marginTop: 14, gridTemplateColumns:'1fr'}}>
           <div className="card">
-            <h2>6) 복용 알람 (시간 조정 + 알람 ON/OFF)</h2>
+            <h2>6) 복용 알람 (생활패턴 시간과 연동)</h2>
             <div className="small">
-              ✅ <b>시간은 자유롭게 변경</b>할 수 있어요. 
+              ✅ 알람 시간은 <b>홈 → 생활 패턴</b>에서 바꾼 시간(기상/식사/취침)을 그대로 사용해요.
               <br />⚠️ 웹/PWA 특성상 <b>앱을 완전히 종료</b>하면 알람이 100% 보장되진 않아요. (설치한 PWA에서 권한을 허용하고, 폰의 배터리 절전이 강하지 않으면 실사용 가능)
             </div>
 
             <div className="hr" />
 
-            <div className="row" style={{justifyContent:'space-between'}}>
-              <div className="row">
-                <label className="chip" style={{cursor:'pointer'}}>
-                  <input
-                    type="checkbox"
-                    checked={remindersState.enabled}
-                    onChange={e=>setRemindersState(prev => ({ ...prev, enabled: e.target.checked }))}
-                    style={{marginRight: 8}}
-                  />
-                  알람 사용
-                </label>
-                <button className="btn" onClick={requestNotificationPermission}>🔔 알림 권한 요청</button>
-                {'Notification' in window && <span className="small">권한: <b>{Notification.permission}</b></span>}
-              </div>
-              <button className="btn" onClick={addReminder}>+ 알람 추가</button>
+            <div className="row" style={{justifyContent:'space-between', flexWrap:'wrap', gap: 8}}>
+              <label className="chip" style={{cursor:'pointer'}}>
+                <input
+                  type="checkbox"
+                  checked={remindersState.enabled}
+                  onChange={e=>setRemindersState(prev => ({ ...prev, enabled: e.target.checked }))}
+                  style={{marginRight: 8}}
+                />
+                알람 사용
+              </label>
+              <button className="btn" onClick={requestNotificationPermission}>🔔 알림 권한 요청</button>
+              {'Notification' in window && <span className="small">권한: <b>{Notification.permission}</b></span>}
             </div>
 
             <div style={{height: 10}} />
 
             <table className="table">
               <thead>
-                <tr><th style={{width: 90}}>ON</th><th>이름</th><th style={{width: 140}}>시간</th><th style={{width: 120}}>삭제</th></tr>
+                <tr><th style={{width: 90}}>ON</th><th>구분</th><th style={{width: 160}}>시간</th></tr>
               </thead>
               <tbody>
-                {remindersState.reminders.map(r => (
-                  <tr key={r.id}>
-                    <td>
-                      <input type="checkbox" checked={r.enabled} onChange={e=>updateReminder(r.id, { enabled: e.target.checked })} />
-                    </td>
-                    <td>
-                      <input className="input" value={r.label} onChange={e=>updateReminder(r.id, { label: e.target.value })} />
-                    </td>
-                    <td>
-                      <input type="time" value={r.time} onChange={e=>updateReminder(r.id, { time: e.target.value })} />
-                    </td>
-                    <td>
-                      <button className="btn" onClick={()=>deleteReminder(r.id)}>🗑️ 삭제</button>
-                    </td>
-                  </tr>
-                ))}
+                {ROUTINE_SLOTS.map(s => {
+                  const r = remindersState.reminders.find(x => x.id === s.id)
+                  const t = (ctx.routine as any)[s.key] as string
+                  return (
+                    <tr key={s.id}>
+                      <td>
+                        <input type="checkbox" checked={!!r?.enabled} onChange={e=>updateReminder(s.id, { enabled: e.target.checked })} />
+                      </td>
+                      <td>{s.label}</td>
+                      <td><span className="badge">{t}</span></td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
+
+            <div className="small" style={{marginTop: 10}}>
+              👉 시간 변경은 <b>홈 → 생활 패턴</b>에서 해 주세요.
+            </div>
           </div>
         </div>
       )}
