@@ -164,7 +164,15 @@ function PurchaseCard(){
     if(openNow){
       try{
         popup = window.open('about:blank', '_blank')
-        if(popup) (popup as any).opener = null
+        if(popup){
+          (popup as any).opener = null
+          try{
+            popup.document.title = 'SuppGuard'
+            popup.document.body.style.fontFamily = 'system-ui, sans-serif'
+            popup.document.body.style.padding = '24px'
+            popup.document.body.innerHTML = '<h2>쿠팡으로 이동 준비 중…</h2><p>잠시만 기다려 주세요 🙂</p>'
+          }catch{}
+        }
       }catch{
         popup = null
       }
@@ -185,7 +193,23 @@ function PurchaseCard(){
         if(openNow){
           // 1) 빈창을 미리 열어둔 경우: 그 창을 링크로 이동
           if(popup && !popup.closed){
+            // 1) 팝업 창으로 이동 시도
             try{ popup.location.href = link }catch{}
+            // 2) 일부 브라우저는 비동기 이후 이동을 막아 about:blank로 남을 수 있어요.
+            //    0.5초 후에도 about:blank면 현재 탭으로 이동(확실한 fallback)
+            setTimeout(() => {
+              try{
+                if(popup && !popup.closed){
+                  const href = popup.location.href
+                  if(href === 'about:blank'){
+                    try{ popup.close() }catch{}
+                    window.location.href = link
+                  }
+                }
+              }catch{
+                // cross-origin으로 바뀌었다면(=이미 이동 성공) 여기서 에러가 날 수 있음 → 무시
+              }
+            }, 500)
           }else{
             // 2) 팝업이 막힌 경우: 현재 탭에서 열기(모바일/PWA에서 더 안정적)
             window.location.href = link
