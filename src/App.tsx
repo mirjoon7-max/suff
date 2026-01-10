@@ -158,6 +158,17 @@ function PurchaseCard(){
     setError('')
     setDeepLink('')
     setLinkBusy(url)
+    // ✅ 팝업 차단 회피: 사용자 클릭 순간에 먼저 빈 창을 열어두고,
+    // 링크 생성이 끝나면 그 창을 쿠팡 파트너스 링크로 이동시킨다.
+    let popup: Window | null = null
+    if(openNow){
+      try{
+        popup = window.open('about:blank', '_blank')
+        if(popup) (popup as any).opener = null
+      }catch{
+        popup = null
+      }
+    }
     try{
       const r = await fetch('/.netlify/functions/coupangDeeplink', {
         method:'POST',
@@ -171,10 +182,20 @@ function PurchaseCard(){
       if(link){
         try{ await navigator.clipboard.writeText(link) }catch{}
         // ✅ 원문 상품 URL을 직접 열지 않고, 생성된 파트너스 링크로만 이동
-        if(openNow) window.open(link, '_blank', 'noopener,noreferrer')
+        if(openNow){
+          // 1) 빈창을 미리 열어둔 경우: 그 창을 링크로 이동
+          if(popup && !popup.closed){
+            try{ popup.location.href = link }catch{}
+          }else{
+            // 2) 팝업이 막힌 경우: 현재 탭에서 열기(모바일/PWA에서 더 안정적)
+            window.location.href = link
+          }
+        }
       }
     }catch(e:any){
       setError(e?.message || '링크 생성 실패')
+      // 링크 생성 실패 시, 미리 열어둔 빈 창이 있으면 닫기
+      try{ if(popup && !popup.closed) popup.close() }catch{}
     }finally{
       setLinkBusy(null)
     }
