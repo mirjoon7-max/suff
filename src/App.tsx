@@ -375,6 +375,7 @@ function uid(){
 }
 
 export default function App(){
+  const [deepLinkErr, setDeepLinkErr] = useState<string>("");
   const persisted = load<Persisted>(LS_KEY, { items: [], ctx: defaultCtx })
   const [items, setItems] = useState<SupplementItem[]>(persisted.items)
   const [ctx, setCtx] = useState<UserContext>(persisted.ctx)
