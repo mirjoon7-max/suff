@@ -163,6 +163,17 @@ function PurchaseCard(){
   }
 
   async function makeLink(productUrl: string, openNow=false){
+    // ✅ 가장 튼튼한 방식: "새 창"이 직접 Netlify Function을 호출해서
+    // 파트너스 링크를 만든 뒤 바로 이동하게 합니다.
+    // (탭/창 사이 localStorage 전달, postMessage 타이밍 문제를 없애요)
+    if(openNow){
+      const goUrl = `/go.html?url=${encodeURIComponent(productUrl)}`
+      const w = window.open(goUrl, '_blank', 'noopener,noreferrer')
+      if(!w){
+        alert('팝업이 차단되었어요 😢\n브라우저 주소창 옆 "팝업 허용"을 켜고 다시 눌러 주세요.')
+      }
+      return
+    }
     // ✅ 안정성 강화: 새 창(popup)과 본 창(opener) 사이 postMessage가
     // 아주 빠르게 오가면, 새 창이 아직 message listener를 붙이기 전이라
     // 메시지를 놓치는 경우가 있어요.

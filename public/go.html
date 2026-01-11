@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>쿠팡으로 이동</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial; padding:24px; line-height:1.5;}
+    .box{max-width:780px}
+    .muted{opacity:.75}
+    button{padding:12px 16px; font-size:16px; border-radius:12px; border:0; cursor:pointer}
+    .primary{background:#1f6feb; color:#fff}
+    .ghost{background:#eee}
+    .row{display:flex; gap:12px; flex-wrap:wrap; margin-top:14px}
+    code{background:#f3f4f6; padding:2px 6px; border-radius:8px}
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>쿠팡으로 이동 준비 중…</h1>
+    <p id="status" class="muted">링크를 만드는 중이에요. 잠시만 기다려 주세요 🙂</p>
+
+    <div class="row">
+      <button id="openBtn" class="primary" style="display:none">쿠팡 열기</button>
+      <button id="retryBtn" class="ghost" style="display:none">다시 시도</button>
+    </div>
+
+    <p class="muted" style="margin-top:18px">
+      팁: 자동 이동이 안 되면 <b>쿠팡 열기</b> 버튼을 눌러 주세요.
+    </p>
+  </div>
+
+<script>
+  function qs(name){
+    const u = new URL(location.href)
+    return u.searchParams.get(name)
+  }
+
+  const productUrl = qs('url')
+  const statusEl = document.getElementById('status')
+  const openBtn = document.getElementById('openBtn')
+  const retryBtn = document.getElementById('retryBtn')
+
+  let finalLink = null
+
+  function showError(msg){
+    statusEl.textContent = msg
+    retryBtn.style.display = 'inline-block'
+  }
+
+  function showOpen(link){
+    finalLink = link
+    statusEl.textContent = '링크 준비 완료! 곧 쿠팡으로 이동합니다 🙂'
+    openBtn.style.display = 'inline-block'
+
+    // 자동 이동 (짧은 지연 후)
+    setTimeout(() => {
+      try{ location.href = link } catch(e){}
+    }, 700)
+  }
+
+  openBtn.addEventListener('click', () => {
+    if(finalLink) location.href = finalLink
+  })
+
+  retryBtn.addEventListener('click', () => {
+    retryBtn.style.display = 'none'
+    openBtn.style.display = 'none'
+    statusEl.textContent = '다시 링크를 만들고 있어요…'
+    start()
+  })
+
+  async function start(){
+    if(!productUrl){
+      showError('앗! 제품 주소(url)가 없어요. 처음 화면으로 돌아가서 다시 눌러 주세요.')
+      return
+    }
+
+    try{
+      const res = await fetch('/.netlify/functions/coupangDeeplink', {
+        method: 'POST',
+        headers: { 'content-type':'application/json' },
+        body: JSON.stringify({ url: productUrl })
+      })
+
+      if(!res.ok){
+        const txt = await res.text().catch(()=> '')
+        showError('링크 생성 실패(서버). 잠시 후 다시 시도해 주세요.\n' + txt)
+        return
+      }
+
+      const data = await res.json().catch(()=> ({}))
+      const deeplink = data && (data.deeplink || data.deepLink || data.data?.deeplink || data.data?.deepLink)
+
+      if(!deeplink){
+        showError('링크를 만들었는데, 결과(deeplink)를 못 받았어요.\n(쿠팡 API 응답 형식이 달라졌을 수 있어요)')
+        return
+      }
+
+      showOpen(deeplink)
+    } catch (e){
+      showError('인터넷 연결이 불안정해요. 잠시 후 다시 시도해 주세요.')
+    }
+  }
+
+  start()
+</script>
+</body>
+</html>
