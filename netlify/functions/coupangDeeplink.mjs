@@ -27,7 +27,7 @@ export default async function handler(req){
     // If it's already an affiliate short link, we can open it directly.
     // (Some search responses or user inputs may already be a `coupa.ng` / `link.coupang.com` link.)
     if(/^https?:\/\/(coupa\.ng|link\.coupang\.com)\//i.test(coupangUrl)){
-      return json({ ok:true, deepLink: coupangUrl, raw: { note: 'already_affiliate_link' } })
+      return json({ ok:true, deeplink: coupangUrl, deepLink: coupangUrl, raw: { note: 'already_affiliate_link' } })
     }
 
     // Normalize common variants so the deeplink API accepts them reliably.
@@ -91,7 +91,8 @@ export default async function handler(req){
       return json({ ok:false, error:'Deeplink not found in response', raw: data }, 502)
     }
 
-    return json({ ok:true, deepLink, raw: data })
+    return json({ ok:true, deeplink: deepLink, deepLink, raw: data })
+
   }catch(e){
     return json({ ok:false, error: String(e?.message || e) }, 500)
   }
