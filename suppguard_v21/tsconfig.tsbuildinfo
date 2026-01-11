@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/lib/nutrients.ts","./src/lib/ocr.ts","./src/lib/parser.ts","./src/lib/rules.ts","./src/lib/storage.ts","./src/lib/supabase.ts"],"errors":true,"version":"5.8.3"}
