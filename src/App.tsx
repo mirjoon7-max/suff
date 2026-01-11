@@ -1,4 +1,4 @@
-import React, {  useEffect, useMemo, useRef, useState  } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { parseLabelText } from './lib/parser'
 import { NUTRIENTS, NutrientKey } from './lib/nutrients'
 import { ageBasedSuggestions, buildSchedule, computeTotals, computeWarnings, SupplementItem, UserContext } from './lib/rules'
@@ -163,8 +163,19 @@ function PurchaseCard(){
   }
 
   async function makeLink(productUrl: string, openNow=false){
+    // ✅ 안정성 강화: 새 창(popup)과 본 창(opener) 사이 postMessage가
+    // 아주 빠르게 오가면, 새 창이 아직 message listener를 붙이기 전이라
+    // 메시지를 놓치는 경우가 있어요.
+    // 그래서 localStorage를 함께 사용해서, 새 창이 링크를 "직접 읽어서" 이동할 수 있게 합니다.
+    const DL_KEY = 'SG_COUPANG_DEEPLINK'
+    const DL_ERR_KEY = 'SG_COUPANG_DEEPLINK_ERR'
+    try{
+      localStorage.removeItem(DL_KEY)
+      localStorage.removeItem(DL_ERR_KEY)
+    }catch{}
+
     setDeepLink('')
-    setDeepLink('')
+    setError('')
     setBusy(true)
 
     // 팝업이 막히는 경우가 많아서, "내부(about:blank) 페이지 + postMessage" 방식으로 최대한 안정적으로 처리합니다.
@@ -203,11 +214,35 @@ function PurchaseCard(){
     btn.onclick = () => { if(link) location.href = link; };
   }
 
+	  // ✅ localStorage 폴링(가장 안정적인 방식)
+	  // opener(원래 창)가 링크를 localStorage에 저장하면,
+	  // 이 새 창이 직접 읽어서 이동할 수 있어요.
+	  const DL_KEY = 'SG_COUPANG_DEEPLINK';
+	  const DL_ERR_KEY = 'SG_COUPANG_DEEPLINK_ERR';
+	  function checkStorage(){
+	    try{
+	      const err = localStorage.getItem(DL_ERR_KEY);
+	      if(err && !link){
+	        msg.textContent = '링크 생성 실패: ' + err;
+	      }
+	      const v = localStorage.getItem(DL_KEY);
+	      if(v && !link){
+	        enable(v);
+	        msg.textContent = '링크 생성 완료! 곧 쿠팡으로 이동합니다…';
+	        setTimeout(() => { try{ location.href = v }catch{} }, 200);
+	        setTimeout(() => { try{ localStorage.removeItem(DL_KEY); localStorage.removeItem(DL_ERR_KEY); }catch{} }, 2000);
+	      }
+	    }catch{}
+	  }
+	  const storageTimer = setInterval(checkStorage, 300);
+	  checkStorage();
+
   window.addEventListener('message', (e) => {
     const d = e.data || {};
     if(d.type !== 'DEEPLINK') return;
 
     if(d.link){
+	      try{ clearInterval(storageTimer); }catch{}
       enable(d.link);
       msg.textContent = '링크 생성 완료! 곧 쿠팡으로 이동합니다…';
       // 자동 이동 시도
@@ -215,6 +250,7 @@ function PurchaseCard(){
       // 3초 후에도 남아있다면 버튼 안내
       setTimeout(() => { msg.textContent = '자동 이동이 안 되면 “쿠팡 열기” 버튼을 눌러 주세요 🙂'; }, 3000);
     } else {
+	      try{ clearInterval(storageTimer); }catch{}
       enable('');
       msg.textContent = '링크 생성 실패: ' + (d.error || '알 수 없는 오류');
     }
@@ -251,6 +287,12 @@ function PurchaseCard(){
       setDeepLink(link)
       try{ await navigator.clipboard.writeText(link) }catch{}
 
+      // ✅ 새 창이 localStorage로도 링크를 읽을 수 있게 저장
+      try{
+        localStorage.setItem(DL_KEY, link)
+        localStorage.removeItem(DL_ERR_KEY)
+      }catch{}
+
       if(openNow){
         // 1) 팝업이 열려 있으면 postMessage로 전달 (가장 안정적)
         if(popup && !popup.closed){
@@ -266,7 +308,14 @@ function PurchaseCard(){
       return link
     }catch(e:any){
       const msg = e?.message || String(e)
-      setDeepLink(msg)
+      setError(msg)
+
+      // ✅ 새 창이 localStorage로도 에러를 표시할 수 있게 저장
+      try{
+        localStorage.setItem(DL_ERR_KEY, msg)
+        localStorage.removeItem(DL_KEY)
+      }catch{}
+
       if(popup && !popup.closed){
         try{ popup.postMessage({ type:'DEEPLINK', link:'', error: msg }, '*') }catch{}
       }
@@ -375,7 +424,6 @@ function uid(){
 }
 
 export default function App(){
-  const [deepLinkErr, setDeepLinkErr] = useState<string>("");
   const persisted = load<Persisted>(LS_KEY, { items: [], ctx: defaultCtx })
   const [items, setItems] = useState<SupplementItem[]>(persisted.items)
   const [ctx, setCtx] = useState<UserContext>(persisted.ctx)
